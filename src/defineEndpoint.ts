@@ -247,6 +247,14 @@ export async function generateMockData<T>(
 
   const generateMode = globalConfig.generateMode || "auto";
 
+  // Schema is required for generation
+  if (!config.schema) {
+    throw new Error(
+      `Schema is required for endpoint ${config.method} ${config.path}. ` +
+      `Define a schema using the 'm' builder: schema: m.object({ ... })`
+    );
+  }
+
   // Validate API key based on mode
   // Faker mode: No API key required (fully open source)
   // AI mode: Require either openaiApiKey (BYOK) OR symulateApiKey (platform)
@@ -300,14 +308,6 @@ export async function generateMockData<T>(
     }
 
     return generatedData;
-  }
-
-  // Schema is required for generation
-  if (!config.schema) {
-    throw new Error(
-      `Schema is required for endpoint ${config.method} ${config.path}. ` +
-      `Define a schema using the 'm' builder: schema: m.object({ ... })`
-    );
   }
 
   const count = config.mock?.count || 1;
