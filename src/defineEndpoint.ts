@@ -252,21 +252,54 @@ export async function generateMockData<T>(
   // AI mode: Require either openaiApiKey (BYOK) OR symulateApiKey (platform)
   // Auto mode: Either API key OR will fall back to Faker
   if (generateMode === "ai" && !globalConfig.openaiApiKey && !globalConfig.symulateApiKey) {
-    throw new Error(
-      `[Symulate] AI mode requires an API key.\n\n` +
-      `Option 1 - BYOK (Bring Your Own Key, fully open source):\n` +
+    // Fall back to faker mode instead of throwing an error
+    console.warn(
+      `[Symulate] Warning: AI mode requires an OpenAI API key. Falling back to Faker mode.\n\n` +
+      `To use AI generation, configure your OpenAI API key:\n` +
       `  configureSymulate({\n` +
       `    openaiApiKey: process.env.OPENAI_API_KEY,\n` +
       `    generateMode: "ai"\n` +
-      `  })\n\n` +
-      `Option 2 - Symulate Platform (with free tier):\n` +
-      `  Get free API key at https://platform.symulate.dev\n` +
-      `  • 100 AI calls/month free\n` +
-      `  • Cloud persistence\n` +
-      `  configureSymulate({ symulateApiKey: "sym_live_xxx" })\n\n` +
-      `Option 3 - Use Faker mode (no API key needed):\n` +
-      `  configureSymulate({ generateMode: "faker" })`
+      `  })\n` +
+      `  Get your OpenAI key at: https://platform.openai.com/api-keys\n`
     );
+
+    // Change mode to faker for this generation
+    const count = config.mock?.count || 1;
+    console.log(`[Symulate] Generating mock data with Faker.js for ${config.path}...`);
+    const generatedData = generateWithFaker(config.schema, count);
+
+    // Track usage for analytics
+    trackUsage({
+      endpoint: config.path,
+      mode: "faker",
+      cached: false,
+    });
+
+    // Cache the generated data
+    const schemaForHash: any = {
+      typeDescription: schemaToTypeDescription(config.schema),
+      count,
+      instruction: config.mock?.instruction ? interpolateVariables(config.mock.instruction, params || {}) : undefined,
+      metadata: runtimeMetadata ? { ...(config.mock?.metadata || {}), ...runtimeMetadata } : (config.mock?.metadata || {}),
+      path: config.path,
+      mode: "faker",
+      params,
+    };
+
+    const regenerateOnConfigChange = globalConfig.regenerateOnConfigChange !== false;
+    if (regenerateOnConfigChange) {
+      schemaForHash.method = config.method;
+      schemaForHash.mockDelay = config.mock?.delay;
+    }
+
+    const schemaHash = computeSchemaHash(schemaForHash);
+
+    if (globalConfig.cacheEnabled) {
+      await setCachedTemplate(schemaHash, generatedData, config.path);
+      console.log(`[Symulate] ✓ Cached Faker.js data for ${config.path} (hash: ${schemaHash})`);
+    }
+
+    return generatedData;
   }
 
   // Schema is required for generation
