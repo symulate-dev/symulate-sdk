@@ -20,8 +20,6 @@ const QUOTA_CHECK_INTERVAL = 60000; // Re-check quota every 60 seconds
 
 export function configureSymulate(config: MockendConfig): void {
   globalConfig = { ...globalConfig, ...config };
-  console.log('[Symulate Config] configureSymulate called with:', config);
-  console.log('[Symulate Config] Final globalConfig:', globalConfig);
 }
 
 export function getConfig(): MockendConfig {

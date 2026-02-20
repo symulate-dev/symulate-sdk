@@ -18,6 +18,7 @@ export type SchemaType =
   | "person.jobTitle"
   | "internet.userName"
   | "internet.avatar"
+  | "internet.jwt"
   | "location.street"
   | "location.city"
   | "location.state"
@@ -107,6 +108,7 @@ export interface ArraySchema<T> extends BaseSchema<T[]> {
     description?: string;
     dataType?: JsonType;
     optional?: boolean;
+    isDataArray?: boolean; // Marks this array as the main data array for list responses
   };
   _element: BaseSchema<T>;
 }
@@ -246,6 +248,13 @@ export class SchemaBuilder {
       return {
         _type: "" as string,
         _meta: { schemaType: "internet.avatar", description: opts?.description, dataType: opts?.dataType },
+      };
+    },
+    jwt: (options?: string | SchemaOptions): StringSchema => {
+      const opts = typeof options === 'string' ? { description: options } : options;
+      return {
+        _type: "" as string,
+        _meta: { schemaType: "internet.jwt", description: opts?.description, dataType: opts?.dataType },
       };
     },
   };
@@ -525,11 +534,16 @@ export class SchemaBuilder {
 
   array<T extends BaseSchema>(
     element: T,
-    description?: string
+    options?: string | { description?: string; isDataArray?: boolean }
   ): ArraySchema<Infer<T>> {
+    const opts = typeof options === 'string' ? { description: options } : options;
     return {
       _type: [] as Infer<T>[],
-      _meta: { schemaType: "array", description },
+      _meta: {
+        schemaType: "array",
+        description: opts?.description,
+        isDataArray: opts?.isDataArray
+      },
       _element: element,
     };
   }
@@ -556,6 +570,37 @@ export class SchemaBuilder {
           field,
         },
       },
+    };
+  }
+
+  // Pick: Select specific fields from an existing object schema
+  pick<T extends Record<string, any>, K extends keyof T>(
+    schema: ObjectSchema<T>,
+    fields: K[]
+  ): ObjectSchema<Pick<T, K>> {
+    // Validate that we're picking from an object schema
+    if (schema._meta.schemaType !== "object") {
+      throw new Error("m.pick() can only be used with object schemas");
+    }
+
+    // Build the new shape with only the picked fields
+    const pickedShape: Record<string, BaseSchema> = {};
+    for (const field of fields) {
+      if (!(field in schema._shape)) {
+        throw new Error(
+          `Field "${String(field)}" does not exist in the source schema`
+        );
+      }
+      pickedShape[field as string] = schema._shape[field];
+    }
+
+    return {
+      _type: {} as Pick<T, K>,
+      _meta: {
+        schemaType: "object",
+        description: schema._meta.description,
+      },
+      _shape: pickedShape as { [P in K]: BaseSchema<T[P]> },
     };
   }
 }
@@ -646,6 +691,7 @@ export function schemaToTypeDescription(schema: BaseSchema): any {
     "person.jobTitle": "job title",
     "internet.userName": "username",
     "internet.avatar": "avatar URL",
+    "internet.jwt": "JWT token",
     "location.street": "street address",
     "location.city": "city",
     "location.state": "state",

@@ -8,10 +8,13 @@ global.fetch = vi.fn();
 describe('edgeFunctionPersistence - Demo API Key Routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset config before each test
+    // Reset config before each test - explicitly clear keys to prevent leaking between tests
     configureSymulate({
       environment: 'development',
       cacheEnabled: false,
+      demoApiKey: undefined,
+      symulateApiKey: undefined,
+      projectId: undefined,
     });
   });
 
@@ -38,7 +41,6 @@ describe('edgeFunctionPersistence - Demo API Key Routing', () => {
       const [url, options] = (global.fetch as any).mock.calls[0];
 
       expect(url).toContain('/functions/v1/symulate-demo');
-      expect(url).not.toContain('/functions/v1/symulate');
       expect(options.headers['x-symulate-demo-key']).toBe('sym_demo_test123');
       expect(options.headers['X-Mockend-API-Key']).toBeUndefined();
     });

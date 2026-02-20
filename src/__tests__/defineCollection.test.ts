@@ -145,7 +145,7 @@ describe('defineCollection', () => {
       });
 
       const result = await products.list({
-        filters: { price: 999 }
+        filter: { price: 999 }
       });
 
       expect(result.data.length).toBeGreaterThan(0);

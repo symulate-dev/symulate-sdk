@@ -143,10 +143,10 @@ export class DataStore<T extends Record<string, any>> {
     // are initialized together in the correct order
     await DataStore.initializeAllCollections();
 
-    // This collection should now be initialized by initializeAllCollections
-    // If not, something went wrong
+    // If not initialized by initializeAllCollections (e.g. standalone store not in registry),
+    // fall back to direct self-initialization without FK integrity
     if (!this.initialized) {
-      throw new Error(`Failed to initialize collection ${this.collectionName}`);
+      await this.initializeWithFKIntegrity(new Map());
     }
   }
 

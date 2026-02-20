@@ -79,7 +79,7 @@ async function refreshAccessToken(session: AuthSession): Promise<string | null> 
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const data = await response.json() as { authenticated?: boolean; accessToken?: string };
       if (data.authenticated && data.accessToken) {
         return data.accessToken;
       }
@@ -237,9 +237,17 @@ async function pollAuthStatus(sessionToken: string, maxAttempts = 60): Promise<A
       });
 
       if (response.ok) {
-        const data = await response.json();
+        const data = await response.json() as {
+          authenticated?: boolean;
+          userId?: string;
+          email?: string;
+          expiresAt?: string | number;
+          accessToken?: string;
+          defaultOrgId?: string;
+          defaultProjectId?: string;
+        };
 
-        if (data.authenticated) {
+        if (data.authenticated && data.userId && data.email && data.expiresAt) {
           // Get previously used org/project even if session is expired
           const previousContext = getPreviousContext();
 
@@ -247,7 +255,7 @@ async function pollAuthStatus(sessionToken: string, maxAttempts = 60): Promise<A
             sessionToken,
             userId: data.userId,
             email: data.email,
-            expiresAt: data.expiresAt,
+            expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : new Date(data.expiresAt).getTime(),
             accessToken: data.accessToken,
             // Prioritize: 1) server defaults (current system), 2) previous session context (if no server default), 3) undefined
             // This ensures switching between Supabase instances uses the correct org/project

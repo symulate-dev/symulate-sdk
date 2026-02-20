@@ -556,7 +556,7 @@ describe('Integration Tests', () => {
 
       // Filter by exact match
       const electronics = await products.list({
-        filters: { category: 'electronics' }
+        filter: { category: 'electronics' }
       });
 
       expect(electronics.data).toHaveLength(2);
@@ -566,7 +566,7 @@ describe('Integration Tests', () => {
 
       // Filter with $gt operator
       const expensive = await products.list({
-        filters: { price: { $gt: 25 } }
+        filter: { price: { $gt: 25 } }
       });
 
       expect(expensive.data).toHaveLength(2);
@@ -576,7 +576,7 @@ describe('Integration Tests', () => {
 
       // Filter with $lte operator
       const cheap = await products.list({
-        filters: { price: { $lte: 20 } }
+        filter: { price: { $lte: 20 } }
       });
 
       expect(cheap.data).toHaveLength(2);

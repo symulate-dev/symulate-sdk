@@ -376,8 +376,10 @@ export interface PaginatedResponse<T> {
 
 /**
  * Collection instance returned by defineCollection
+ * @template TBase - The base schema type (used for inputs like create/update)
+ * @template TResponse - The response schema type with joins (used for outputs), defaults to TBase if no responseSchema
  */
-export interface Collection<T = any> {
+export interface Collection<TBase = any, TResponse = TBase> {
   /**
    * Collection name
    */
@@ -391,7 +393,7 @@ export interface Collection<T = any> {
   /**
    * Schema definition
    */
-  readonly schema: BaseSchema<T>;
+  readonly schema: BaseSchema<TBase>;
 
   /**
    * Generated endpoints map
@@ -410,33 +412,45 @@ export interface Collection<T = any> {
    * List all items with pagination
    * GET /{basePath}
    *
-   * Returns PaginatedResponse<T> by default, or custom response shape if responseSchema is defined
+   * Returns PaginatedResponse<TResponse> by default, or custom response shape if
+   * operation-specific responseSchema is defined in operations.list.responseSchema
    */
   list(options?: QueryOptions): Promise<any>;
 
   /**
    * Get single item by ID
    * GET /{basePath}/:id
+   *
+   * Returns item with joined fields if responseSchema is defined
    */
-  get(id: string, options?: OperationOptions): Promise<T>;
+  get(id: string, options?: OperationOptions): Promise<TResponse>;
 
   /**
    * Create new item
    * POST /{basePath}
+   *
+   * Input: base schema fields (no joins)
+   * Output: response schema with joined fields if responseSchema is defined
    */
-  create(data: Omit<T, 'id' | 'createdAt' | 'updatedAt'>, options?: OperationOptions): Promise<T>;
+  create(data: Omit<TBase, 'id' | 'createdAt' | 'updatedAt'>, options?: OperationOptions): Promise<TResponse>;
 
   /**
    * Partial update (PATCH)
    * PATCH /{basePath}/:id
+   *
+   * Input: partial base schema fields (no joins)
+   * Output: response schema with joined fields if responseSchema is defined
    */
-  update(id: string, data: Partial<T>, options?: OperationOptions): Promise<T>;
+  update(id: string, data: Partial<TBase>, options?: OperationOptions): Promise<TResponse>;
 
   /**
    * Full replacement (PUT)
    * PUT /{basePath}/:id
+   *
+   * Input: base schema fields (no joins)
+   * Output: response schema with joined fields if responseSchema is defined
    */
-  replace(id: string, data: Omit<T, 'id'>, options?: OperationOptions): Promise<T>;
+  replace(id: string, data: Omit<TBase, 'id'>, options?: OperationOptions): Promise<TResponse>;
 
   /**
    * Delete item
@@ -451,11 +465,13 @@ export interface Collection<T = any> {
 
 /**
  * Internal metadata for collection registry
+ * @template TBase - The base schema type
+ * @template TResponse - The response schema type with joins, defaults to TBase
  */
-export interface CollectionMetadata<T = any> {
+export interface CollectionMetadata<TBase = any, TResponse = TBase> {
   name: string;
-  config: CollectionConfig<T>;
-  instance: Collection<T>;
+  config: CollectionConfig<TBase>;
+  instance: Collection<TBase, TResponse>;
   endpoints: Map<OperationName, any>;
   store: any;
   createdAt: Date;

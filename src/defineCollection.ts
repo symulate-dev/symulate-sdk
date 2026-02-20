@@ -99,6 +99,173 @@ function getFetchFunction(operationFetch?: typeof fetch): typeof fetch {
 }
 
 /**
+ * Project response data to match the responseSchema
+ * Picks only the fields defined in the responseSchema
+ */
+function projectResponse<T>(data: T | T[], responseSchema: BaseSchema<any>): any {
+  if (!responseSchema || responseSchema._meta.schemaType !== 'object') {
+    return data;
+  }
+
+  const objectSchema = responseSchema as any;
+  const fields = Object.keys(objectSchema._shape || {});
+
+  if (fields.length === 0) {
+    return data;
+  }
+
+  const projectItem = (item: any): any => {
+    const projected: any = {};
+    for (const field of fields) {
+      if (field in item) {
+        projected[field] = item[field];
+      }
+    }
+    return projected;
+  };
+
+  if (Array.isArray(data)) {
+    return data.map(projectItem);
+  } else {
+    return projectItem(data);
+  }
+}
+
+/**
+ * Build response object matching the given schema
+ * Simply iterates through schema fields and builds each one according to its type
+ */
+async function buildResponseFromSchema(
+  result: any,
+  schema: BaseSchema<any>,
+  collectionConfig: any
+): Promise<any> {
+  if (schema._meta.schemaType !== 'object') {
+    // Not an object schema, can't build response
+    return result;
+  }
+
+  const schemaShape = (schema as any)._shape;
+  const response: any = {};
+
+  // Get the source data
+  const sourceData = result.data || (Array.isArray(result) ? result : []);
+  const pagination = result.pagination;
+
+  // Build ONE response object with all fields
+  for (const [key, fieldSchema] of Object.entries(schemaShape)) {
+    response[key] = await buildField(
+      key,
+      fieldSchema as any,
+      sourceData,
+      pagination,
+      collectionConfig
+    );
+  }
+
+  return response;
+}
+
+/**
+ * Build a single field value based on its schema type
+ */
+async function buildField(
+  fieldName: string,
+  fieldSchema: any,
+  sourceData: any[],
+  pagination: any,
+  collectionConfig: any
+): Promise<any> {
+  const schemaType = fieldSchema._meta?.schemaType;
+
+  if (schemaType === 'array') {
+    // Array field - apply element schema to source data
+    const elementSchema = fieldSchema._element;
+    if (elementSchema) {
+      let processedData = sourceData;
+      if (collectionConfig.relations) {
+        processedData = await resolveJoins(processedData, elementSchema, collectionConfig.relations, collectionConfig.name);
+      }
+      processedData = projectResponse(processedData, elementSchema);
+      return processedData;
+    }
+    return sourceData;
+  } else if (schemaType === 'object') {
+    // Object field - build nested object from schema
+    return await buildNestedObject(fieldSchema, sourceData, pagination, collectionConfig);
+  } else if (schemaType?.startsWith('collectionsMeta.')) {
+    // Collection metadata field
+    return calculateMetaField(schemaType, sourceData, pagination);
+  } else {
+    // Primitive field - return null (user should populate these)
+    return null;
+  }
+}
+
+/**
+ * Build a nested object from its schema
+ */
+async function buildNestedObject(
+  schema: any,
+  sourceData: any[],
+  pagination: any,
+  collectionConfig: any
+): Promise<any> {
+  const schemaShape = schema._shape || {};
+  const obj: any = {};
+
+  for (const [key, fieldSchema] of Object.entries(schemaShape)) {
+    obj[key] = await buildField(
+      key,
+      fieldSchema as any,
+      sourceData,
+      pagination,
+      collectionConfig
+    );
+  }
+
+  return obj;
+}
+
+
+/**
+ * Calculate a single meta field value
+ */
+function calculateMetaField(schemaType: string, data: any[], pagination: any): any {
+  if (schemaType === 'collectionsMeta.total') {
+    return pagination?.total || data.length;
+  } else if (schemaType === 'collectionsMeta.page') {
+    return pagination?.page || 1;
+  } else if (schemaType === 'collectionsMeta.limit') {
+    return pagination?.limit || data.length;
+  } else if (schemaType === 'collectionsMeta.totalPages') {
+    return pagination?.totalPages || 1;
+  } else if (schemaType.startsWith('collectionsMeta.avg:')) {
+    const fieldName = schemaType.split(':')[1];
+    const sum = data.reduce((acc, item) => acc + (Number(item[fieldName]) || 0), 0);
+    return data.length > 0 ? sum / data.length : 0;
+  } else if (schemaType.startsWith('collectionsMeta.sum:')) {
+    const fieldName = schemaType.split(':')[1];
+    return data.reduce((acc, item) => acc + (Number(item[fieldName]) || 0), 0);
+  } else if (schemaType.startsWith('collectionsMeta.min:')) {
+    const fieldName = schemaType.split(':')[1];
+    const values = data.map(item => Number(item[fieldName])).filter(v => !isNaN(v));
+    return values.length > 0 ? Math.min(...values) : 0;
+  } else if (schemaType.startsWith('collectionsMeta.max:')) {
+    const fieldName = schemaType.split(':')[1];
+    const values = data.map(item => Number(item[fieldName])).filter(v => !isNaN(v));
+    return values.length > 0 ? Math.max(...values) : 0;
+  } else if (schemaType.startsWith('collectionsMeta.count:')) {
+    const parts = schemaType.split(':');
+    const fieldName = parts[1];
+    const targetValue = parts[2] ? JSON.parse(parts[2]) : null;
+    return data.filter(item => item[fieldName] === targetValue).length;
+  }
+
+  return null;
+}
+
+/**
  * Serialize autoGenerate config for sending to edge function
  * Converts functions to a serializable format
  */
@@ -143,25 +310,42 @@ function serializeAutoGenerate(autoGenerate?: any): any {
 /**
  * Define a stateful CRUD collection
  *
+ * @template TBase - The base schema type (inferred from schema property)
+ * @template TResponse - The response schema type with joins (inferred from responseSchema property), defaults to TBase
+ *
  * @example
+ * // Without responseSchema (TResponse = TBase)
  * const users = defineCollection({
  *   name: 'users',
  *   schema: UserSchema,
  *   seedCount: 50
  * });
  *
+ * // With responseSchema (TResponse includes join fields)
+ * const orders = defineCollection({
+ *   name: 'orders',
+ *   schema: OrderSchema,
+ *   responseSchema: OrderResponseSchema, // includes userName, userEmail from joins
+ *   relations: { user: {...} }
+ * });
+ *
  * await users.list();
  * await users.get('id');
- * await users.create(data);
+ * await users.create(data); // data: TBase (no join fields)
  */
-export function defineCollection<T extends Record<string, any>>(
-  config: CollectionConfig<T>
-): Collection<T> {
+export function defineCollection<
+  TBase extends Record<string, any>,
+  TResponse extends Record<string, any> = TBase
+>(
+  config: CollectionConfig<TBase> & {
+    responseSchema?: BaseSchema<TResponse>;
+  }
+): Collection<TBase, TResponse> {
   // Check if already registered - only return if exact same config
   const existing = getCollection(config.name);
   if (existing) {
     console.warn(`Collection "${config.name}" already registered. Returning existing instance.`);
-    return existing as Collection<T>;
+    return existing as Collection<TBase, TResponse>;
   }
 
   // Normalize configuration
@@ -172,8 +356,8 @@ export function defineCollection<T extends Record<string, any>>(
   const persistenceMode = globalConfig.collections?.persistence?.mode || getDefaultPersistenceMode();
   validatePersistenceMode(persistenceMode);
 
-  // Create DataStore
-  const store = new DataStore<T>({
+  // Create DataStore (uses base schema for storage)
+  const store = new DataStore<TBase>({
     collectionName: normalizedConfig.name,
     schema: normalizedConfig.schema,
     seedCount: normalizedConfig.seedCount,
@@ -246,14 +430,25 @@ export function defineCollection<T extends Record<string, any>>(
         result = await callStatefulList(normalizedConfig, options);
       }
 
-      // Resolve joins if responseSchema contains join fields
-      if (responseSchema && normalizedConfig.relations) {
-        if (result.data) {
-          // Paginated response
-          result.data = await resolveJoins(result.data, responseSchema, normalizedConfig.relations, normalizedConfig.name);
-        } else if (Array.isArray(result)) {
-          // Direct array response
-          result = await resolveJoins(result, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+      // Transform response to match responseSchema if defined
+      if (responseSchema && responseSchema._meta.schemaType === 'object') {
+        // Check if this is a response envelope schema (has collectionsMeta fields)
+        // or an item-level schema (with join fields for each item)
+        const schemaShape = (responseSchema as any)._shape || {};
+        const isResponseEnvelope = Object.values(schemaShape).some(
+          (s: any) => s._meta?.schemaType?.startsWith('collectionsMeta.') || s._meta?.schemaType === 'array'
+        );
+
+        if (isResponseEnvelope) {
+          result = await buildResponseFromSchema(result, responseSchema, normalizedConfig);
+        } else {
+          // Item-level schema: resolve joins and project fields on each item
+          let items = result.data || [];
+          if (normalizedConfig.relations) {
+            items = await resolveJoins(items, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+          }
+          items = projectResponse(items, responseSchema);
+          result = { ...result, data: items };
         }
       }
 
@@ -262,7 +457,7 @@ export function defineCollection<T extends Record<string, any>>(
   }
 
   if (enabledOps.get) {
-    collection.get = async function(id: string, options?: OperationOptions): Promise<T> {
+    collection.get = async function(id: string, options?: OperationOptions): Promise<TResponse> {
       if (!isDevelopment()) {
         return await callBackendGet(basePath, id, options);
       }
@@ -293,9 +488,12 @@ export function defineCollection<T extends Record<string, any>>(
         item = await callStatefulGet(normalizedConfig, id);
       }
 
-      // Resolve joins if responseSchema contains join fields
-      if (responseSchema && normalizedConfig.relations) {
-        item = await resolveJoins(item, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+      // Resolve joins and project fields if responseSchema is defined
+      if (responseSchema) {
+        if (normalizedConfig.relations) {
+          item = await resolveJoins(item, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+        }
+        item = projectResponse(item, responseSchema);
       }
 
       return item;
@@ -303,7 +501,7 @@ export function defineCollection<T extends Record<string, any>>(
   }
 
   if (enabledOps.create) {
-    collection.create = async function(data: Omit<T, 'id' | 'createdAt' | 'updatedAt'>, options?: OperationOptions): Promise<T> {
+    collection.create = async function(data: Omit<TBase, 'id' | 'createdAt' | 'updatedAt'>, options?: OperationOptions): Promise<TResponse> {
       if (!isDevelopment()) {
         return await callBackendCreate(basePath, data, options);
       }
@@ -328,30 +526,34 @@ export function defineCollection<T extends Record<string, any>>(
       const globalConfig = getConfig();
       const persistenceMode = globalConfig.collections?.persistence?.mode || getDefaultPersistenceMode();
 
-      let created: T;
+      let created: TBase;
       if (persistenceMode === 'memory' || persistenceMode === 'local') {
         // Use local DataStore
         created = await store.insert(processedData);
       } else {
         // Use edge function for server-side persistence
-        created = await callStatefulCreate<T>(normalizedConfig, processedData);
+        created = await callStatefulCreate<TBase>(normalizedConfig, processedData);
       }
 
       if (normalizedConfig.hooks?.afterCreate) {
         await normalizedConfig.hooks.afterCreate(created);
       }
 
-      // Resolve joins if responseSchema contains join fields
-      if (responseSchema && normalizedConfig.relations) {
-        created = await resolveJoins(created, responseSchema, normalizedConfig.relations, normalizedConfig.name) as T;
+      // Resolve joins and project fields if responseSchema is defined
+      let result: any = created;
+      if (responseSchema) {
+        if (normalizedConfig.relations) {
+          result = await resolveJoins(created, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+        }
+        result = projectResponse(result, responseSchema);
       }
 
-      return created;
+      return result as TResponse;
     };
   }
 
   if (enabledOps.update) {
-    collection.update = async function(id: string, data: Partial<T>, options?: OperationOptions): Promise<T> {
+    collection.update = async function(id: string, data: Partial<TBase>, options?: OperationOptions): Promise<TResponse> {
       if (!isDevelopment()) {
         return await callBackendUpdate(basePath, id, data, options);
       }
@@ -375,7 +577,7 @@ export function defineCollection<T extends Record<string, any>>(
       const globalConfig = getConfig();
       const persistenceMode = globalConfig.collections?.persistence?.mode || getDefaultPersistenceMode();
 
-      let updated: T;
+      let updated: TBase;
       if (persistenceMode === 'memory' || persistenceMode === 'local') {
         // Use local DataStore
         const result = await store.update(id, processedData);
@@ -385,24 +587,28 @@ export function defineCollection<T extends Record<string, any>>(
         updated = result;
       } else {
         // Use edge function for server-side persistence
-        updated = await callStatefulUpdate<T>(normalizedConfig, id, processedData);
+        updated = await callStatefulUpdate<TBase>(normalizedConfig, id, processedData);
       }
 
       if (normalizedConfig.hooks?.afterUpdate) {
         await normalizedConfig.hooks.afterUpdate(updated);
       }
 
-      // Resolve joins if responseSchema contains join fields
-      if (responseSchema && normalizedConfig.relations) {
-        updated = await resolveJoins(updated, responseSchema, normalizedConfig.relations, normalizedConfig.name) as T;
+      // Resolve joins and project fields if responseSchema is defined
+      let result: any = updated;
+      if (responseSchema) {
+        if (normalizedConfig.relations) {
+          result = await resolveJoins(updated, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+        }
+        result = projectResponse(result, responseSchema);
       }
 
-      return updated;
+      return result as TResponse;
     };
   }
 
   if (enabledOps.replace) {
-    collection.replace = async function(id: string, data: Omit<T, 'id'>, options?: OperationOptions): Promise<T> {
+    collection.replace = async function(id: string, data: Omit<TBase, 'id'>, options?: OperationOptions): Promise<TResponse> {
       if (!isDevelopment()) {
         return await callBackendReplace(basePath, id, data, options);
       }
@@ -414,24 +620,36 @@ export function defineCollection<T extends Record<string, any>>(
       // Simulate loading delay if configured
       await applyDelay(operationConfig?.mock?.delay);
 
+      // Extract response schema if defined
+      const responseSchema = operationConfig?.responseSchema || normalizedConfig.responseSchema;
+
       // Check persistence mode
       const globalConfig = getConfig();
       const persistenceMode = globalConfig.collections?.persistence?.mode || getDefaultPersistenceMode();
 
-      let replaced: T;
+      let replaced: TBase;
       if (persistenceMode === 'memory' || persistenceMode === 'local') {
         // Use local DataStore
-        const result = await store.replace(id, data as T);
+        const result = await store.replace(id, data as TBase);
         if (!result) {
           throw new Error(`${normalizedConfig.name} not found: ${id}`);
         }
         replaced = result;
       } else {
         // Use edge function for server-side persistence (replace is same as update)
-        replaced = await callStatefulUpdate<T>(normalizedConfig, id, data as T);
+        replaced = await callStatefulUpdate<TBase>(normalizedConfig, id, data as TBase);
       }
 
-      return replaced;
+      // Resolve joins and project fields if responseSchema is defined
+      let result: any = replaced;
+      if (responseSchema) {
+        if (normalizedConfig.relations) {
+          result = await resolveJoins(replaced, responseSchema, normalizedConfig.relations, normalizedConfig.name);
+        }
+        result = projectResponse(result, responseSchema);
+      }
+
+      return result as TResponse;
     };
   }
 
@@ -446,11 +664,11 @@ export function defineCollection<T extends Record<string, any>>(
       const persistenceMode = globalConfig.collections?.persistence?.mode || getDefaultPersistenceMode();
 
       // Get item for error check (use appropriate method based on persistence mode)
-      let item: T | null;
+      let item: TBase | null;
       if (persistenceMode === 'memory' || persistenceMode === 'local') {
         item = await store.findById(id);
       } else {
-        item = await callStatefulGet<T>(normalizedConfig, id);
+        item = await callStatefulGet<TBase>(normalizedConfig, id);
       }
 
       // Check for error conditions

@@ -36,6 +36,31 @@ export function generateWithFaker<T>(
   return generateSingleValue(schema, fkValuePools) as T;
 }
 
+/**
+ * Generates a fake JWT token that looks realistic
+ */
+function generateFakeJwt(): string {
+  const header = {
+    alg: "HS256",
+    typ: "JWT"
+  };
+
+  const payload = {
+    sub: faker.string.uuid(),
+    name: faker.person.fullName(),
+    email: faker.internet.email(),
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
+    jti: faker.string.uuid()
+  };
+
+  const base64Header = btoa(JSON.stringify(header)).replace(/=/g, '');
+  const base64Payload = btoa(JSON.stringify(payload)).replace(/=/g, '');
+  const fakeSignature = faker.string.alphanumeric(43);
+
+  return `${base64Header}.${base64Payload}.${fakeSignature}`;
+}
+
 function generateSingleValue(schema: BaseSchema, fkValuePools?: Map<string, string[]>, fieldName?: string): any {
   // Check if field is optional and randomly make it undefined (25% chance)
   if (schema._meta.optional && Math.random() < 0.25) {
@@ -128,6 +153,9 @@ function generateSingleValue(schema: BaseSchema, fkValuePools?: Map<string, stri
 
     case "internet.avatar":
       return faker.image.avatar();
+
+    case "internet.jwt":
+      return generateFakeJwt();
 
     // Location fields
     case "location.street":

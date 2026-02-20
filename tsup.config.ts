@@ -20,6 +20,7 @@ export default defineConfig({
     index: 'src/index.ts',
     browser: 'src/browser.ts',
     'cli/index': 'src/cli/index.ts',
+    auth: 'src/auth.ts',
   },
   format: ['cjs', 'esm'],
   dts: true,
